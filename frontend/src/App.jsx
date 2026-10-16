@@ -1,0 +1,97 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, ArrowDownLeft, ArrowUpRight, Bot, ChartNoAxesCombined, ChevronDown, CircleHelp, CreditCard, LayoutDashboard, LoaderCircle, Plus, Search, Send, Settings2, ShieldCheck, Sparkles, Trash2, Wallet, X } from 'lucide-react';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+
+const API = (import.meta.env.VITE_API_URL || 'http://localhost:8080').replace(/\/$/, '');
+const money = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(n || 0));
+const dateText = (d) => d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const today = new Date().toISOString().slice(0, 10);
+
+function App() {
+  const [transactions, setTransactions] = useState([]);
+  const [summary, setSummary] = useState({ income: 0, expenses: 0, balance: 0, transactionCount: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [active, setActive] = useState('Overview');
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('ALL');
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ title: '', category: 'Food', amount: '', type: 'EXPENSE', transactionDate: today, notes: '' });
+  const [chat, setChat] = useState([{ role: 'assistant', text: 'Hi! I’m your FinFlow Assistant. Ask me about your spending or savings.' }]);
+  const [question, setQuestion] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const [tRes, sRes] = await Promise.all([fetch(`${API}/api/transactions`), fetch(`${API}/api/dashboard/summary`)]);
+      if (!tRes.ok || !sRes.ok) throw new Error('The API returned an error. Check that the backend and database are running.');
+      setTransactions(await tRes.json()); setSummary(await sRes.json());
+    } catch (e) { setError(e.message || 'Unable to connect to FinFlow API.'); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const visible = useMemo(() => transactions.filter(t => {
+    const q = search.toLowerCase();
+    return (!q || `${t.title} ${t.category}`.toLowerCase().includes(q)) && (filter === 'ALL' || t.type === filter);
+  }), [transactions, search, filter]);
+
+  const chartData = useMemo(() => {
+    const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (6 - i)); return d.toISOString().slice(0, 10); });
+    return days.map(day => ({ day: new Date(`${day}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' }), income: transactions.filter(t => t.transactionDate === day && t.type === 'INCOME').reduce((s,t) => s + Number(t.amount), 0), expenses: transactions.filter(t => t.transactionDate === day && t.type === 'EXPENSE').reduce((s,t) => s + Number(t.amount), 0) }));
+  }, [transactions]);
+
+  async function addTransaction(e) {
+    e.preventDefault(); setSaving(true); setError('');
+    try {
+      const response = await fetch(`${API}/api/transactions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, amount: Number(form.amount) }) });
+      if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.message || 'Could not save transaction.'); }
+      setShowForm(false); setForm({ title: '', category: 'Food', amount: '', type: 'EXPENSE', transactionDate: today, notes: '' }); await refresh();
+    } catch (e2) { setError(e2.message); } finally { setSaving(false); }
+  }
+  async function removeTransaction(id) {
+    if (!window.confirm('Delete this transaction?')) return;
+    try { const r = await fetch(`${API}/api/transactions/${id}`, { method: 'DELETE' }); if (!r.ok) throw new Error('Could not delete transaction.'); await refresh(); }
+    catch (e) { setError(e.message); }
+  }
+  async function sendQuestion(e) {
+    e.preventDefault(); const message = question.trim(); if (!message || chatBusy) return;
+    setChat(c => [...c, { role: 'user', text: message }]); setQuestion(''); setChatBusy(true);
+    try { const r = await fetch(`${API}/api/assistant/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }) }); if (!r.ok) throw new Error('Assistant is unavailable.'); const data = await r.json(); setChat(c => [...c, { role: 'assistant', text: data.reply }]); }
+    catch { setChat(c => [...c, { role: 'assistant', text: 'I can’t reach the backend right now. Please check that the API is running.' }]); }
+    finally { setChatBusy(false); }
+  }
+
+  const nav = [{ name: 'Overview', icon: LayoutDashboard }, { name: 'Transactions', icon: CreditCard }, { name: 'AI Assistant', icon: Bot }];
+  return <div className="app-shell">
+    <aside className="sidebar">
+      <div className="brand"><div className="brand-mark"><Activity size={22}/></div><div><b>finflow</b><span>PERSONAL FINANCE</span></div></div>
+      <div className="workspace-label">WORKSPACE</div>
+      <nav>{nav.map(item => <button key={item.name} className={`nav-item ${active === item.name ? 'selected' : ''}`} onClick={() => setActive(item.name)}><item.icon size={18}/><span>{item.name}</span>{item.name === 'AI Assistant' && <span className="new-pill">AI</span>}</button>)}</nav>
+      <div className="sidebar-bottom"><div className="upgrade-card"><div className="upgrade-icon"><Sparkles size={17}/></div><b>Your money, in focus.</b><p>Small steps today. Stronger finances tomorrow.</p><div className="upgrade-line"><span></span></div></div><div className="profile"><div className="avatar">TP</div><div className="profile-info"><b>My Workspace</b><span>Personal account</span></div><ChevronDown size={16} className="muted"/></div></div>
+    </aside>
+    <main className="main-area">
+      <header className="topbar"><div className="breadcrumbs"><span>Workspace</span><span className="slash">/</span><b>{active}</b></div><div className="top-actions"><div className="secure-label"><ShieldCheck size={15}/> Your finance overview</div><button className="icon-button" aria-label="Settings"><Settings2 size={18}/></button><div className="avatar small">TP</div></div></header>
+      <div className="content">
+        <div className="page-heading"><div><div className="eyebrow"><span className="status-dot"></span> YOUR FINANCIAL SNAPSHOT</div><h1>{active === 'Overview' ? 'Good to see you.' : active}</h1><p>{active === 'Overview' ? 'A clearer picture of your money starts here.' : active === 'Transactions' ? 'Every transaction, organized in one place.' : 'A little guidance for smarter money habits.'}</p></div>{active !== 'AI Assistant' && <button className="primary-button" onClick={() => setShowForm(true)}><Plus size={18}/> Add transaction</button>}</div>
+        {error && <div className="error-banner"><CircleHelp size={18}/><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss"><X size={16}/></button></div>}
+        {active === 'AI Assistant' ? <section className="assistant-layout"><div className="assistant-intro"><div className="assistant-orb"><Bot size={28}/></div><div><div className="eyebrow">FINFLOW INTELLIGENCE</div><h2>Your personal money assistant</h2><p>Ask about recorded spending, monthly totals, and simple budgeting habits.</p></div></div><div className="chat-panel"><div className="chat-top"><div className="assistant-mini"><div className="assistant-mini-icon"><Sparkles size={17}/></div><div><b>FinFlow Assistant</b><span><i className="status-dot"/> Ready to help</span></div></div><span className="beta-pill">BETA</span></div><div className="chat-messages">{chat.map((m,i) => <div key={i} className={`message ${m.role}`}><div className="message-avatar">{m.role === 'assistant' ? <Bot size={16}/> : 'TP'}</div><div className="message-text">{m.text}</div></div>)}{chatBusy && <div className="message assistant"><div className="message-avatar"><Bot size={16}/></div><div className="message-text"><LoaderCircle className="spin" size={17}/></div></div>}</div><div className="suggestions"><button onClick={() => setQuestion('How can I save more money?')}>How can I save more?</button><button onClick={() => setQuestion('Summarize my expenses')}>Summarize my expenses</button></div><form className="chat-input" onSubmit={sendQuestion}><input value={question} onChange={e => setQuestion(e.target.value)} placeholder="Ask about your money…"/><button disabled={!question.trim() || chatBusy} aria-label="Send message"><Send size={17}/></button></form><p className="disclaimer">Basic budgeting guidance only — not professional financial advice.</p></div></section> : <>
+          <section className="stats-grid">
+            <StatCard label="Total balance" amount={summary.balance} icon={Wallet} tone="violet" detail="Income minus expenses this month"/>
+            <StatCard label="Income this month" amount={summary.income} icon={ArrowDownLeft} tone="green" detail="Money coming in" positive/>
+            <StatCard label="Expenses this month" amount={summary.expenses} icon={ArrowUpRight} tone="orange" detail="Money going out"/>
+            <div className="stat-card count-card"><div className="stat-top"><span>Transactions</span><div className="stat-icon tone-blue"><CreditCard size={18}/></div></div><div className="stat-value">{summary.transactionCount ?? 0}</div><div className="stat-foot"><span className="mini-bars"><i/><i/><i/><i/><i/><i/></span><span>All recorded activity</span></div></div>
+          </section>
+          {active === 'Overview' && <section className="overview-grid"><div className="panel chart-panel"><div className="panel-heading"><div><h3>Cash flow</h3><p>Your recorded activity over the last 7 days</p></div><span className="period-chip">LAST 7 DAYS <ChevronDown size={13}/></span></div><div className="chart-legend"><span><i className="legend-income"/> Income</span><span><i className="legend-expense"/> Expenses</span></div><div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{ top: 8, right: 8, left: -15, bottom: 0 }}><defs><linearGradient id="incomeFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#6d70e8" stopOpacity={0.24}/><stop offset="100%" stopColor="#6d70e8" stopOpacity={0.01}/></linearGradient><linearGradient id="expenseFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f1a36c" stopOpacity={0.18}/><stop offset="100%" stopColor="#f1a36c" stopOpacity={0.01}/></linearGradient></defs><CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e9ebf2"/><XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: '#9095a7', fontSize: 12 }}/><YAxis axisLine={false} tickLine={false} tick={{ fill: '#9095a7', fontSize: 11 }} tickFormatter={v => v >= 1000 ? `₹${v/1000}k` : `₹${v}`}/><Tooltip formatter={v => money(v)} contentStyle={{ borderRadius: 12, border: '1px solid #e9ebf2', boxShadow: '0 8px 25px #2221' }}/><Area type="monotone" dataKey="income" name="Income" stroke="#6d70e8" strokeWidth={2.5} fill="url(#incomeFill)"/><Area type="monotone" dataKey="expenses" name="Expenses" stroke="#f1a36c" strokeWidth={2.5} fill="url(#expenseFill)"/></AreaChart></ResponsiveContainer></div></div><div className="panel insight-panel"><div className="panel-heading"><div><h3>Money insight</h3><p>A quick look at your month</p></div><div className="insight-spark"><Sparkles size={17}/></div></div><div className="insight-ring"><div className="ring-inner"><span>NET THIS MONTH</span><b>{money(summary.balance)}</b><small>{summary.balance >= 0 ? 'You are in the positive' : 'Expenses are above income'}</small></div></div><div className="insight-row"><span><i className="legend-income"/> Total income</span><b>{money(summary.income)}</b></div><div className="insight-row"><span><i className="legend-expense"/> Total expenses</span><b>{money(summary.expenses)}</b></div><div className="insight-tip"><Sparkles size={15}/><span>{summary.transactionCount ? 'Keep recording transactions to make your money insights more useful.' : 'Add your first transaction to start seeing your financial picture.'}</span></div></div></section>}
+          <section className="panel transactions-panel"><div className="panel-heading transaction-heading"><div><h3>{active === 'Overview' ? 'Recent transactions' : 'All transactions'}</h3><p>{active === 'Overview' ? 'Your latest financial activity' : `${visible.length} matching records`}</p></div><div className="table-tools"><div className="search-box"><Search size={16}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search transactions"/></div><select value={filter} onChange={e => setFilter(e.target.value)} aria-label="Filter transaction type"><option value="ALL">All types</option><option value="INCOME">Income</option><option value="EXPENSE">Expenses</option></select>{active === 'Overview' && <button className="text-button" onClick={() => setActive('Transactions')}>View all <ArrowUpRight size={14}/></button>}</div></div><div className="table-scroll"><table><thead><tr><th>TRANSACTION</th><th>CATEGORY</th><th>DATE</th><th>AMOUNT</th><th>TYPE</th><th></th></tr></thead><tbody>{loading ? <tr><td colSpan="6" className="empty-state"><LoaderCircle className="spin" size={20}/> Loading transactions…</td></tr> : visible.slice(0, active === 'Overview' ? 5 : undefined).map(t => <tr key={t.id}><td><div className="transaction-name"><div className={`transaction-icon ${t.type === 'INCOME' ? 'income-bg' : 'expense-bg'}`}>{t.type === 'INCOME' ? <ArrowDownLeft size={17}/> : <ArrowUpRight size={17}/>}</div><div><b>{t.title}</b><span>{t.notes || (t.type === 'INCOME' ? 'Income received' : 'Expense recorded')}</span></div></div></td><td><span className="category-tag">{t.category}</span></td><td className="date-cell">{dateText(t.transactionDate)}</td><td className={`amount-cell ${t.type === 'INCOME' ? 'amount-positive' : ''}`}>{t.type === 'INCOME' ? '+' : '−'}{money(t.amount)}</td><td><span className={`type-pill ${t.type === 'INCOME' ? 'type-income' : 'type-expense'}`}>{t.type === 'INCOME' ? 'Income' : 'Expense'}</span></td><td><button className="delete-button" onClick={() => removeTransaction(t.id)} aria-label={`Delete ${t.title}`} title="Delete transaction"><Trash2 size={15}/></button></td></tr>)}</tbody></table>{!loading && visible.length === 0 && <div className="empty-state"><div className="empty-icon"><ChartNoAxesCombined size={22}/></div><b>No transactions yet</b><span>Add a transaction to bring your finances into focus.</span><button className="primary-button compact" onClick={() => setShowForm(true)}><Plus size={16}/> Add transaction</button></div>}</div></section>
+        </>}
+        <footer className="footer"><span>© {new Date().getFullYear()} FinFlow</span><span>Built for a clearer financial future <span className="footer-heart">✦</span></span><span><i className="status-dot"/> API-connected dashboard</span></footer>
+      </div>
+    </main>
+    {showForm && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setShowForm(false); }}><div className="modal"><div className="modal-head"><div><div className="eyebrow">KEEP YOUR RECORDS UPDATED</div><h2>Add transaction</h2><p>Record income or an expense.</p></div><button className="icon-button" onClick={() => setShowForm(false)} aria-label="Close"><X size={18}/></button></div><form onSubmit={addTransaction} className="transaction-form"><label>Transaction title<input required maxLength="120" placeholder="e.g. Monthly salary" value={form.title} onChange={e => setForm({...form, title:e.target.value})}/></label><div className="form-two"><label>Amount (₹)<input required min="0.01" step="0.01" type="number" placeholder="0.00" value={form.amount} onChange={e => setForm({...form, amount:e.target.value})}/></label><label>Type<select value={form.type} onChange={e => setForm({...form, type:e.target.value})}><option value="EXPENSE">Expense</option><option value="INCOME">Income</option></select></label></div><div className="form-two"><label>Category<select value={form.category} onChange={e => setForm({...form, category:e.target.value})}>{['Food','Transport','Shopping','Bills','Health','Education','Salary','Freelance','Entertainment','Housing','Investment','Other'].map(c => <option key={c}>{c}</option>)}</select></label><label>Date<input type="date" required value={form.transactionDate} onChange={e => setForm({...form, transactionDate:e.target.value})}/></label></div><label>Notes <span className="optional">(optional)</span><textarea maxLength="500" rows="2" placeholder="Add a note…" value={form.notes} onChange={e => setForm({...form, notes:e.target.value})}/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? <LoaderCircle size={16} className="spin"/> : <Plus size={17}/>} {saving ? 'Saving…' : 'Save transaction'}</button></div></form></div></div>}
+  </div>;
+}
+function StatCard({ label, amount, icon: Icon, tone, detail, positive }) { return <div className="stat-card"><div className="stat-top"><span>{label}</span><div className={`stat-icon tone-${tone}`}><Icon size={18}/></div></div><div className="stat-value">{money(amount)}</div><div className="stat-foot">{positive ? <span className="trend-tag"><ArrowDownLeft size={13}/></span> : <span className="stat-foot-dot"/>}<span>{detail}</span></div></div>; }
+export default App;
